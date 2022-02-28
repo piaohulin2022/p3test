@@ -19,6 +19,7 @@ app.get('/', (req, res) => {
   res.send('hello ! this is eric');
 });
 
+
 app.use('/v1', router);
 
 // connectDB();
