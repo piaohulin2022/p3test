@@ -1,63 +1,62 @@
 pipeline {
-    
     agent any
     
-    environment{
+//    options {}
+
+//    tools {}
+
+    environment {
         AWS_ACCOUNT_ID="355100329777"
-        AWS_DEFAULT_REGION="ap-southeast-2"
-        IMAGE_REPO_NAME="p3backendimagerepo"
+        AWS_DEFAULT_REGION="us-west-1"
+        JENKINS_AWS_ID="my.aws.credentials"
+        IMAGE_REPO_NAME="p3test"
         IMAGE_TAG="Latest"
-        REPOSITORY_URI = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}"
-        DOCKER_CONTAINER_NAME = "P3-Backend-Dev"
-        AWSCLI_DIR = '/usr/local/bin/'
+        REPOSITORY_URL = "https://${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+        //DOCKER_CONTAINER_NAME = "P3-Backend-Dev"
+        //AWSCLI_DIR = '/usr/local/bin/'
     }
-    
+
     stages {
-        
-        stage ('git checkout') {
+        stage('Git Clone') {
             steps {
-                checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/CreativeGang/pipeline.git']]])
+                echo 'Git Cloning..'
+                checkout([$class: 'GitSCM', branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/piaohulin2022/p3test.git']]])
             }
         }
-        
-        stage ('Building Docker image'){
+        stage(' Docker Image Building & push') {
             steps {
+                echo 'Building image..'
                 script {
-                    dockerImage = docker.build "${IMAGE_REPO_NAME}:${IMAGE_TAG}"
+                    docker.withRegistry("${REPOSITORY_URL}","ecr:${AWS_DEFAULT_REGION}:${JENKINS_AWS_ID}"){
+                        def myImage = docker.build("${IMAGE_REPO_NAME}")
+                        myImage.push("${IMAGE_TAG}")
+                    }
                 }
             }
         }
-        
-        stage('Loging into AWS ECR'){
+        stage('Deploy') {
             steps {
-                script {
-                    sh '${AWSCLI_DIR}aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com'
+                echo 'ECS Deploying....'
+                script{
+                    try {
+                        //withAWS(role: '{IAM Role 이름}', roleAccount: '{AWS 계정 번호}', externalId:'externalId') {
+                        withAWS(region: 'us-west-1', credentials: 'my.aws.credentials') {
+                            echo 'you are in here'
+                            
+                            sh 'aws ecs update-service --region us-west-1 --cluster p3test-ECS-Cluster --service p3test-ECS-Service --force-new-deployment'
+                        }
+                        
+                        } catch (error) {
+                            print(error)
+                            echo 'Remove Deploy Files'
+                            //sh "sudo rm -rf /var/lib/jenkins/workspace/${env.JOB_NAME}/*"
+                            currentBuild.result = 'FAILURE'
+                        }
+                    }
+                
                 }
             }
         }
-        
-        stage('Pushing into AWS ECR'){
-            steps {
-                script {
-                    sh "docker tag ${IMAGE_REPO_NAME}:${IMAGE_TAG} ${REPOSITORY_URI}:$IMAGE_TAG"
-                    sh "docker push ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}"
-                }
-            }
-        }
-        
-        stage('stop previous containers') {
-            steps {
-                sh 'docker ps -f name=${DOCKER_CONTAINER_NAME} -q | xargs --no-run-if-empty docker container stop'
-                sh 'docker container ls -a -fname=${DOCKER_CONTAINER_NAME} -q | xargs -r docker container rm'
-            }
-        }
-      
-        stage('Docker Run') {
-            steps{
-                script {
-                    sh 'docker run -d -p 8096:8096 --rm --name ${DOCKER_CONTAINER_NAME} ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com/${IMAGE_REPO_NAME}:${IMAGE_TAG}'
-                }
-            }
-        }
-    }
+    
+//    post {}
 }
